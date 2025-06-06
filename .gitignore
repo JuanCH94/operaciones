@@ -1,2 +1,8 @@
+# Ignorar archivos específicos
+x_train_balanced.pkl
 x_train.pkl
-/content/drive/MyDrive/operaciones/salidas/data_final/
+x_test_balanced.pkl
+best_model.h5
+
+# Ignorar una carpeta completa 
+/data/
