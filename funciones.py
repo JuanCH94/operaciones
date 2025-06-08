@@ -13,6 +13,11 @@ import os
 from PIL import Image 
 from pathlib import Path
 import numpy as np
+import numpy as np
+from sklearn.utils import shuffle
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+import matplotlib.pyplot as plt
+import tensorflow as tf
                      
 
 # --- Función para redimensionar y copiar ---
@@ -73,3 +78,105 @@ def cargar_imagenes_en_array(path):
                 print(f"Error con la imagen: {imagen_path} | {e}")
 
     return np.array(x_data), np.array(y_data), file_list
+
+
+    # Función para balancear un conjunto de datos (train o test)
+def balance_datasets(x, y, datagen):
+    classes, counts = np.unique(y, return_counts=True)
+    max_count = max(counts)
+    x_aug = []
+    y_aug = []
+
+    for c in classes:
+        x_class = x[y == c]
+        y_class = y[y == c]
+        n_samples_needed = max_count - len(x_class)
+
+        # Agregar los datos originales
+        x_aug.extend(x_class)
+        y_aug.extend(y_class)
+
+        # Generar muestras augmentadas si es necesario
+        if n_samples_needed > 0:
+            # Reshape para que datagen.flow funcione correctamente con un solo lote
+            x_class_reshaped = np.expand_dims(x_class, axis=1)
+            y_class_reshaped = np.expand_dims(y_class, axis=1)
+
+            gen = datagen.flow(x_class, y_class, batch_size=1)
+            for _ in range(n_samples_needed):
+                x_gen, y_gen = next(gen)
+                x_aug.append(x_gen[0])
+                y_aug.append(y_gen[0])
+
+    # Convertir a arrays numpy
+    x_balanced = np.array(x_aug)
+    y_balanced = np.array(y_aug)
+
+    # Barajar (opcional pero recomendable)
+    x_balanced, y_balanced = shuffle(x_balanced, y_balanced, random_state=42)
+
+    return x_balanced, y_balanced
+
+# Función para generar Grad-CAM 
+def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None):
+    grad_model = tf.keras.models.Model(
+        [model.inputs], [model.get_layer(last_conv_layer_name).output, model.output]
+    )
+    with tf.GradientTape() as tape:
+        conv_outputs, predictions = grad_model(img_array)
+        if pred_index is None:
+            pred_index = tf.argmax(predictions[0])
+        class_channel = predictions[:, pred_index]
+
+    grads = tape.gradient(class_channel, conv_outputs)
+    pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
+    conv_outputs = conv_outputs[0]
+    heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
+    heatmap = tf.squeeze(heatmap)
+    heatmap = tf.maximum(heatmap, 0) / tf.math.reduce_max(heatmap)
+    return heatmap.numpy()
+
+# Función para superponer heatmap a la imagen
+def superimpose_heatmap(img, heatmap, alpha=0.4):
+    import cv2
+    heatmap = cv2.resize(heatmap, (img.shape[1], img.shape[0]))
+    heatmap = np.uint8(255 * heatmap)
+    heatmap_color = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
+    superimposed_img = heatmap_color * alpha + img
+    superimposed_img = np.clip(superimposed_img, 0, 255).astype(np.uint8)
+    return superimposed_img
+
+# Ejemplo para mostrar imágenes y predicciones con Grad-CAM
+def show_images_with_gradcam(model, dataset, start_idx, end_idx, last_conv_layer_name):
+    for i in range(start_idx, end_idx):
+        img = dataset[i]
+        img_array = np.expand_dims(img, axis=0)  # Expandir dims para batch
+        preds = model.predict(img_array)
+        pred_class = np.argmax(preds[0])
+        pred_label = class_names[pred_class]
+
+        heatmap = make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_class)
+        img_uint8 = (img * 255).astype(np.uint8)  # Si tu imagen está en [0,1]
+        superimposed_img = superimpose_heatmap(img_uint8, heatmap)
+
+        plt.figure(figsize=(10,4))
+
+        plt.subplot(1, 3, 1)
+        plt.title('Imagen Original')
+        plt.imshow(img)
+        plt.axis('off')
+
+        plt.subplot(1, 3, 2)
+        plt.title('Heatmap Grad-CAM')
+        plt.imshow(heatmap, cmap='jet')
+        plt.axis('off')
+
+        plt.subplot(1, 3, 3)
+        plt.title(f'Imagen + Heatmap\nPredicción: {pred_label}')
+        plt.imshow(superimposed_img)
+        plt.axis('off')
+
+        plt.show()
+
+
+    
