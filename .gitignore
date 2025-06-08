@@ -5,6 +5,6 @@ x_test_balanced.pkl
 best_model.h5
 
 # Ignorar una carpeta completa 
-/data/
+#/data/
 
 _pycache_
